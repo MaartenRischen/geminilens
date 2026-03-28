@@ -280,7 +280,7 @@
 
 <script>
 // ─── CONFIG ───────────────────────────────────────────────────────────
-const API_KEY = 'AIzaSyDT0C-U92gyBxA1J7DBMUk_J6CI79NGUDs';
+const API_KEY = new URLSearchParams(window.location.search).get('key') || '';
 const MODEL = 'models/gemini-3.1-flash-live-preview';
 const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${API_KEY}`;
 const DEMISMATCH_URL = 'https://ivlbjochxaupsblqdwyq.supabase.co/functions/v1/demismatch-mcp/05209024ef7793e6bbd6c45678aa2b7a';
@@ -874,6 +874,15 @@ muteBtn.addEventListener('click', () => {
 });
 
 // ─── START BUTTON ─────────────────────────────────────────────────────
+// Show key warning if missing
+if (!API_KEY) {
+  document.getElementById('init-message').innerHTML =
+    'Add your Google AI Studio key to the URL:<br><br>' +
+    '<span style="opacity:0.7;font-size:11px;word-break:break-all;">' +
+    window.location.origin + window.location.pathname + '?key=YOUR_KEY</span>';
+  startBtn.style.display = 'none';
+}
+
 startBtn.addEventListener('click', async () => {
   startBtn.disabled = true;
   startBtn.textContent = 'CONNECTING...';
