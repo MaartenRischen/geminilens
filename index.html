@@ -66,30 +66,6 @@
     font-weight: 500;
   }
 
-  #mute-btn {
-    pointer-events: auto;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #fff;
-    font-family: inherit;
-    font-size: 11px;
-    letter-spacing: 2px;
-    padding: 8px 14px;
-    border-radius: 6px;
-    cursor: pointer;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    transition: all 0.2s ease;
-  }
-
-  #mute-btn:active {
-    background: rgba(255, 255, 255, 0.2);
-  }
-
-  #mute-btn.muted {
-    background: rgba(255, 60, 60, 0.2);
-    border-color: rgba(255, 60, 60, 0.4);
-  }
 
   #bottom-panel {
     padding: 0 20px 30px;
@@ -101,16 +77,19 @@
 
   #transcript {
     width: 100%;
-    max-height: 120px;
+    max-height: 45vh;
     overflow-y: auto;
     font-size: 13px;
-    line-height: 1.5;
-    opacity: 0.8;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+    line-height: 1.6;
+    opacity: 0.9;
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
     scrollbar-width: none;
     -ms-overflow-style: none;
-    mask-image: linear-gradient(transparent, #000 20%);
-    -webkit-mask-image: linear-gradient(transparent, #000 20%);
+    mask-image: linear-gradient(transparent, #000 10%);
+    -webkit-mask-image: linear-gradient(transparent, #000 10%);
+    background: linear-gradient(transparent, rgba(0,0,0,0.6));
+    padding: 16px 4px 4px;
+    border-radius: 12px;
   }
 
   #transcript::-webkit-scrollbar { display: none; }
@@ -156,17 +135,36 @@
     50% { opacity: 0.4; }
   }
 
-  #hint {
-    font-size: 13px;
-    letter-spacing: 1px;
-    opacity: 0.6;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
-    transition: opacity 1.5s ease;
-    text-align: center;
-    line-height: 1.6;
+  #decode-btn {
+    pointer-events: auto;
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.6);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-family: inherit;
+    font-size: 10px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
-  #hint.fade { opacity: 0; }
+  #decode-btn:active {
+    transform: scale(0.92);
+    background: rgba(255, 255, 255, 0.2);
+    border-color: #fff;
+  }
+
+  #decode-btn:disabled {
+    opacity: 0.3;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
 
   #status-text {
     font-size: 11px;
@@ -268,11 +266,10 @@
 <div id="ui-overlay">
   <div id="top-bar">
     <div id="lens-label">LENS</div>
-    <button id="mute-btn">MIC ON</button>
   </div>
   <div id="bottom-panel">
-    <div id="hint">Point at anything. Say "decode this."</div>
     <div id="transcript"></div>
+    <button id="decode-btn" disabled>DECODE</button>
     <div id="status-bar">
       <div id="status-dot" class="listening"></div>
       <div id="status-text">INITIALIZING</div>
@@ -282,7 +279,7 @@
 
 <div id="init-screen">
   <div id="init-title">LENS</div>
-  <div id="init-message">Camera + microphone access required.<br>Point at anything. Speak. Decode.</div>
+  <div id="init-message">Camera access required.<br>Point at anything. Tap decode.</div>
   <button id="start-btn">START</button>
 </div>
 
@@ -466,28 +463,17 @@ const FUNCTION_DECLARATIONS = [
 
 // ─── STATE ────────────────────────────────────────────────────────────
 let ws = null;
-let audioContext = null;
-let playbackContext = null;
-let micStream = null;
-let workletNode = null;
 let videoStream = null;
-let videoEl = null;
 let canvas = null;
 let canvasCtx = null;
-let frameInterval = null;
-let isMuted = false;
 let isConnected = false;
-let audioQueue = [];
-let isPlayingAudio = false;
 let currentTranscript = '';
 
 // ─── DOM REFS ─────────────────────────────────────────────────────────
 const cameraFeed = document.getElementById('camera-feed');
-const speakingOverlay = document.getElementById('speaking-overlay');
 const transcript = document.getElementById('transcript');
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
-const muteBtn = document.getElementById('mute-btn');
 const initScreen = document.getElementById('init-screen');
 const startBtn = document.getElementById('start-btn');
 const reconnectOverlay = document.getElementById('reconnect-overlay');
@@ -510,99 +496,6 @@ function appendTranscript(text) {
 function clearTranscript() {
   currentTranscript = '';
   transcript.textContent = '';
-}
-
-// ─── AUDIO WORKLET PROCESSOR (inline) ─────────────────────────────────
-function createWorkletBlob() {
-  const code = `
-    class PCMProcessor extends AudioWorkletProcessor {
-      constructor() {
-        super();
-        this.bufferSize = 2400; // 150ms at 16kHz
-        this.buffer = new Float32Array(this.bufferSize);
-        this.offset = 0;
-      }
-      process(inputs) {
-        const input = inputs[0];
-        if (!input || !input[0]) return true;
-        const chan = input[0];
-        for (let i = 0; i < chan.length; i++) {
-          this.buffer[this.offset++] = chan[i];
-          if (this.offset >= this.bufferSize) {
-            const int16 = new Int16Array(this.bufferSize);
-            for (let j = 0; j < this.bufferSize; j++) {
-              const s = Math.max(-1, Math.min(1, this.buffer[j]));
-              int16[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            }
-            const bytes = new Uint8Array(int16.buffer);
-            let binary = '';
-            for (let j = 0; j < bytes.length; j++) {
-              binary += String.fromCharCode(bytes[j]);
-            }
-            this.port.postMessage(btoa(binary));
-            this.offset = 0;
-          }
-        }
-        return true;
-      }
-    }
-    registerProcessor('pcm-processor', PCMProcessor);
-  `;
-  return URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
-}
-
-// ─── AUDIO PLAYBACK ───────────────────────────────────────────────────
-function initPlaybackContext() {
-  if (!playbackContext) {
-    playbackContext = new AudioContext({ sampleRate: 24000 });
-  }
-}
-
-let scheduledTime = 0;
-
-function playAudioChunk(base64Data) {
-  initPlaybackContext();
-
-  const binaryStr = atob(base64Data);
-  const bytes = new Uint8Array(binaryStr.length);
-  for (let i = 0; i < binaryStr.length; i++) {
-    bytes[i] = binaryStr.charCodeAt(i);
-  }
-
-  const int16 = new Int16Array(bytes.buffer);
-  const float32 = new Float32Array(int16.length);
-  for (let i = 0; i < int16.length; i++) {
-    float32[i] = int16[i] / 32768;
-  }
-
-  const buffer = playbackContext.createBuffer(1, float32.length, 24000);
-  buffer.getChannelData(0).set(float32);
-
-  const source = playbackContext.createBufferSource();
-  source.buffer = buffer;
-  source.connect(playbackContext.destination);
-
-  const now = playbackContext.currentTime;
-  if (scheduledTime < now) {
-    scheduledTime = now;
-  }
-  source.start(scheduledTime);
-  scheduledTime += buffer.duration;
-
-  if (!isPlayingAudio) {
-    isPlayingAudio = true;
-    speakingOverlay.classList.add('active');
-    setStatus('speaking', 'SPEAKING');
-    const hint = document.getElementById('hint');
-    if (hint) hint.classList.add('fade');
-  }
-}
-
-function stopPlayback() {
-  scheduledTime = 0;
-  isPlayingAudio = false;
-  speakingOverlay.classList.remove('active');
-  setStatus('listening', 'LISTENING');
 }
 
 // ─── DE-MISMATCH API ──────────────────────────────────────────────────
@@ -642,14 +535,7 @@ function connect() {
       setup: {
         model: MODEL,
         generationConfig: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: 'Orus'
-              }
-            }
-          },
+          responseModalities: ['TEXT'],
           thinkingConfig: {
             thinkingLevel: 'medium'
           }
@@ -677,8 +563,8 @@ function connect() {
       console.log('Setup complete');
       isConnected = true;
       reconnectOverlay.classList.remove('visible');
-      setStatus('listening', 'LISTENING');
-      startAudioCapture();
+      setStatus('listening', 'READY');
+      document.getElementById('decode-btn').disabled = false;
       startVideoCapture();
       return;
     }
@@ -687,31 +573,19 @@ function connect() {
     if (msg.serverContent) {
       const sc = msg.serverContent;
 
-      // Model turn — audio parts
+      // Model turn — text parts
       if (sc.modelTurn && sc.modelTurn.parts) {
         for (const part of sc.modelTurn.parts) {
-          if (part.inlineData && part.inlineData.mimeType && part.inlineData.mimeType.startsWith('audio/')) {
-            playAudioChunk(part.inlineData.data);
-          }
           if (part.text) {
             appendTranscript(part.text);
           }
         }
       }
 
-      // Interrupted — stop playback
-      if (sc.interrupted) {
-        stopPlayback();
-      }
-
       // Turn complete
       if (sc.turnComplete) {
-        // Give a small delay for audio to finish, then reset status
-        setTimeout(() => {
-          if (!isPlayingAudio || scheduledTime <= (playbackContext?.currentTime || 0)) {
-            stopPlayback();
-          }
-        }, 500);
+        setStatus('listening', 'READY');
+        document.getElementById('decode-btn').disabled = false;
       }
     }
 
@@ -749,68 +623,10 @@ function connect() {
   ws.onclose = (e) => {
     console.log('WebSocket closed:', e.code, e.reason);
     isConnected = false;
-    stopAudioCapture();
     stopVideoCapture();
     reconnectOverlay.classList.add('visible');
     setStatus('listening', 'DISCONNECTED');
   };
-}
-
-// ─── AUDIO CAPTURE ────────────────────────────────────────────────────
-async function startAudioCapture() {
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        sampleRate: 16000,
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
-
-    audioContext = new AudioContext({ sampleRate: 16000 });
-    const source = audioContext.createMediaStreamSource(micStream);
-
-    const workletUrl = createWorkletBlob();
-    await audioContext.audioWorklet.addModule(workletUrl);
-    URL.revokeObjectURL(workletUrl);
-
-    workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
-    workletNode.port.onmessage = (e) => {
-      if (!isMuted && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          realtimeInput: {
-            audio: {
-              data: e.data,
-              mimeType: 'audio/pcm;rate=16000'
-            }
-          }
-        }));
-      }
-    };
-
-    source.connect(workletNode);
-    workletNode.connect(audioContext.destination);
-    console.log('Audio capture started');
-  } catch (e) {
-    console.error('Audio capture error:', e);
-  }
-}
-
-function stopAudioCapture() {
-  if (workletNode) {
-    workletNode.disconnect();
-    workletNode = null;
-  }
-  if (audioContext) {
-    audioContext.close();
-    audioContext = null;
-  }
-  if (micStream) {
-    micStream.getTracks().forEach(t => t.stop());
-    micStream = null;
-  }
 }
 
 // ─── VIDEO CAPTURE ────────────────────────────────────────────────────
@@ -830,66 +646,58 @@ async function startVideoCapture() {
       cameraFeed.onloadedmetadata = resolve;
     });
 
-    // Start capturing frames at ~1fps
-    frameInterval = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        sendVideoFrame();
-      }
-    }, 1000);
-
     console.log('Video capture started');
   } catch (e) {
     console.warn('Camera not available, continuing with audio only:', e.message);
   }
 }
 
-function sendVideoFrame() {
-  const vw = cameraFeed.videoWidth;
-  const vh = cameraFeed.videoHeight;
-  if (!vw || !vh) return;
-
-  // Resize to max 768px wide
-  const scale = Math.min(768 / vw, 1);
-  const w = Math.round(vw * scale);
-  const h = Math.round(vh * scale);
-
-  canvas.width = w;
-  canvas.height = h;
-  canvasCtx.drawImage(cameraFeed, 0, 0, w, h);
-
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-  const base64 = dataUrl.split(',')[1];
-
-  ws.send(JSON.stringify({
-    realtimeInput: {
-      video: {
-        data: base64,
-        mimeType: 'image/jpeg'
-      }
-    }
-  }));
-}
-
 function stopVideoCapture() {
-  if (frameInterval) {
-    clearInterval(frameInterval);
-    frameInterval = null;
-  }
   if (videoStream) {
     videoStream.getTracks().forEach(t => t.stop());
     videoStream = null;
   }
 }
 
-// ─── MUTE TOGGLE ──────────────────────────────────────────────────────
-muteBtn.addEventListener('click', () => {
-  isMuted = !isMuted;
-  muteBtn.textContent = isMuted ? 'MIC OFF' : 'MIC ON';
-  muteBtn.classList.toggle('muted', isMuted);
-});
+// ─── DECODE BUTTON ────────────────────────────────────────────────────
+function sendDecode() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const btn = document.getElementById('decode-btn');
+  btn.disabled = true;
+  clearTranscript();
+  setStatus('processing', 'DECODING');
+
+  // Capture current frame
+  const vw = cameraFeed.videoWidth;
+  const vh = cameraFeed.videoHeight;
+  let parts = [{ text: 'Decode this.' }];
+
+  if (vw && vh) {
+    const scale = Math.min(768 / vw, 1);
+    const w = Math.round(vw * scale);
+    const h = Math.round(vh * scale);
+    canvas.width = w;
+    canvas.height = h;
+    canvasCtx.drawImage(cameraFeed, 0, 0, w, h);
+    const base64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+    parts = [
+      { inlineData: { mimeType: 'image/jpeg', data: base64 } },
+      { text: 'Decode this.' }
+    ];
+  }
+
+  ws.send(JSON.stringify({
+    clientContent: {
+      turns: [{ role: 'user', parts }],
+      turnComplete: true
+    }
+  }));
+}
+
+document.getElementById('decode-btn').addEventListener('click', sendDecode);
 
 // ─── START BUTTON ─────────────────────────────────────────────────────
-// Show key warning if missing
 if (!API_KEY) {
   document.getElementById('init-message').innerHTML =
     'Add your Google AI Studio key to the URL:<br><br>' +
@@ -902,13 +710,6 @@ startBtn.addEventListener('click', async () => {
   startBtn.disabled = true;
   startBtn.textContent = 'CONNECTING...';
   initScreen.classList.add('hidden');
-
-  // Resume audio contexts (required by browsers after user gesture)
-  initPlaybackContext();
-  if (playbackContext.state === 'suspended') {
-    await playbackContext.resume();
-  }
-
   connect();
 });
 
@@ -917,13 +718,6 @@ reconnectOverlay.addEventListener('click', () => {
   reconnectOverlay.classList.remove('visible');
   connect();
 });
-
-// ─── TRACK AUDIO PLAYBACK END ─────────────────────────────────────────
-setInterval(() => {
-  if (isPlayingAudio && playbackContext && scheduledTime <= playbackContext.currentTime) {
-    stopPlayback();
-  }
-}, 200);
 </script>
 </body>
 </html>
