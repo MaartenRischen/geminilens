@@ -156,6 +156,18 @@
     50% { opacity: 0.4; }
   }
 
+  #hint {
+    font-size: 13px;
+    letter-spacing: 1px;
+    opacity: 0.6;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+    transition: opacity 1.5s ease;
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  #hint.fade { opacity: 0; }
+
   #status-text {
     font-size: 11px;
     letter-spacing: 2px;
@@ -259,6 +271,7 @@
     <button id="mute-btn">MIC ON</button>
   </div>
   <div id="bottom-panel">
+    <div id="hint">Point at anything. Say "decode this."</div>
     <div id="transcript"></div>
     <div id="status-bar">
       <div id="status-dot" class="listening"></div>
@@ -580,6 +593,8 @@ function playAudioChunk(base64Data) {
     isPlayingAudio = true;
     speakingOverlay.classList.add('active');
     setStatus('speaking', 'SPEAKING');
+    const hint = document.getElementById('hint');
+    if (hint) hint.classList.add('fade');
   }
 }
 
