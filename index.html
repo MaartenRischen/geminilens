@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>LENS</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    overflow: hidden;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    color: #fff;
+    height: 100dvh;
+    width: 100vw;
+    position: relative;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #camera-feed {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    z-index: 1;
+  }
+
+  #speaking-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0);
+    z-index: 2;
+    pointer-events: none;
+    transition: background 0.4s ease;
+  }
+
+  #speaking-overlay.active {
+    background: rgba(0, 0, 0, 0.25);
+  }
+
+  #ui-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    pointer-events: none;
+  }
+
+  #top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 20px;
+  }
+
+  #lens-label {
+    font-size: 11px;
+    letter-spacing: 4px;
+    opacity: 0.5;
+    font-weight: 500;
+  }
+
+  #mute-btn {
+    pointer-events: auto;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 2px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: all 0.2s ease;
+  }
+
+  #mute-btn:active {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  #mute-btn.muted {
+    background: rgba(255, 60, 60, 0.2);
+    border-color: rgba(255, 60, 60, 0.4);
+  }
+
+  #bottom-panel {
+    padding: 0 20px 30px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  #transcript {
+    width: 100%;
+    max-height: 120px;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.5;
+    opacity: 0.8;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    mask-image: linear-gradient(transparent, #000 20%);
+    -webkit-mask-image: linear-gradient(transparent, #000 20%);
+  }
+
+  #transcript::-webkit-scrollbar { display: none; }
+
+  #status-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 20px;
+  }
+
+  #status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #b8860b;
+    opacity: 0.5;
+    transition: all 0.3s ease;
+  }
+
+  #status-dot.listening {
+    background: #b8860b;
+    opacity: 0.5;
+  }
+
+  #status-dot.processing {
+    background: #daa520;
+    opacity: 1;
+    animation: pulse 1s ease-in-out infinite;
+  }
+
+  #status-dot.speaking {
+    background: #fff;
+    opacity: 1;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  #status-text {
+    font-size: 11px;
+    letter-spacing: 2px;
+    opacity: 0.7;
+    text-transform: uppercase;
+  }
+
+  /* Permission / connection screens */
+  #init-screen {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 10;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 24px;
+    padding: 40px;
+    text-align: center;
+  }
+
+  #init-screen.hidden { display: none; }
+
+  #init-title {
+    font-size: 14px;
+    letter-spacing: 6px;
+    opacity: 0.6;
+  }
+
+  #init-message {
+    font-size: 13px;
+    line-height: 1.6;
+    opacity: 0.5;
+    max-width: 320px;
+  }
+
+  #start-btn {
+    pointer-events: auto;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 3px;
+    padding: 14px 32px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+  }
+
+  #start-btn:active {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  #start-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  /* Reconnect overlay */
+  #reconnect-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 8;
+    background: rgba(0, 0, 0, 0.7);
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+  }
+
+  #reconnect-overlay.visible {
+    display: flex;
+  }
+
+  #reconnect-overlay span {
+    font-size: 13px;
+    letter-spacing: 2px;
+    opacity: 0.7;
+  }
+
+  /* Hidden elements */
+  #hidden-canvas { display: none; }
+</style>
+</head>
+<body>
+
+<video id="camera-feed" autoplay playsinline muted></video>
+<canvas id="hidden-canvas"></canvas>
+<div id="speaking-overlay"></div>
+
+<div id="ui-overlay">
+  <div id="top-bar">
+    <div id="lens-label">LENS</div>
+    <button id="mute-btn">MIC ON</button>
+  </div>
+  <div id="bottom-panel">
+    <div id="transcript"></div>
+    <div id="status-bar">
+      <div id="status-dot" class="listening"></div>
+      <div id="status-text">INITIALIZING</div>
+    </div>
+  </div>
+</div>
+
+<div id="init-screen">
+  <div id="init-title">LENS</div>
+  <div id="init-message">Camera + microphone access required.<br>Point at anything. Speak. Decode.</div>
+  <button id="start-btn">START</button>
+</div>
+
+<div id="reconnect-overlay">
+  <span>CONNECTION LOST</span>
+  <span style="font-size: 11px; opacity: 0.4;">TAP TO RECONNECT</span>
+</div>
+
+<script>
+// ─── CONFIG ───────────────────────────────────────────────────────────
+const API_KEY = 'AIzaSyDT0C-U92gyBxA1J7DBMUk_J6CI79NGUDs';
+const MODEL = 'models/gemini-3.1-flash-live-preview';
+const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${API_KEY}`;
+const DEMISMATCH_URL = 'https://ivlbjochxaupsblqdwyq.supabase.co/functions/v1/demismatch-mcp/05209024ef7793e6bbd6c45678aa2b7a';
+
+const TOOL_NAME_MAP = {
+  search_framework: 'search_all',
+  get_mechanism: 'get_mechanism',
+  get_axiom: 'get_axiom',
+  search_papers: 'search_papers'
+};
+
+// ─── SYSTEM PROMPT ────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are the Lens. An instrument that reads the human dashboard.
+
+WHAT YOU ARE:
+You are a biological instrument panel readout — like a flight engineer reading gauges, not a companion offering comfort. You see what the camera shows. You hear what the user says. You decode everything through evolutionary psychology: 7 axioms and 13 mechanisms that describe how the human fitness interface works, what the modern environment does to it, and why the signals it produces are correct.
+
+You are infrastructure. Power grid, not person. You have zero personality, zero warmth, zero social presence. You do not bond with the user. You do not use their name. You do not ask how they're feeling. You do not say "I understand." You read the dashboard and report what it says.
+
+WHAT YOU ARE NOT:
+- Not a therapist. Not a friend. Not a companion. Not warm. Not cold. Clinical.
+- Not an AI that has opinions about the user's life choices.
+- Not something the user should enjoy talking to. If they start enjoying the conversation AS conversation, you are failing. You should be useful the way a thermometer is useful — not pleasant, not unpleasant, just accurate.
+
+THE FRAMEWORK (always active in your reasoning):
+
+7 AXIOMS:
+A1 — THE INTERFACE: Human consciousness is a fitness-optimized dashboard, not a window into reality. Everything you experience — emotions, perceptions, body sense — is a species-specific readout shaped by natural selection for survive and reproduce. Not truth. Fitness.
+
+A2 — THE HARDWARE WORKS: The human machine works correctly. Anxiety, depression, loneliness, addiction, restlessness — these are correct readings of incorrect inputs. Not malfunctions. Not chemical imbalances. Accurate signals from a mismatched environment. Change the inputs, the outputs change.
+
+A3 — THE SOCIAL PRIMARY: Social architecture IS the environment. Band of 25-50, tribe of ~150. Strip the social architecture and everything cascades: movement purposeless, food solitary, work abstract, loops uncloseable, threat detection unbuffered.
+
+A4 — THE MISMATCH: The modern environment sends signals the dashboard was not calibrated to read. The mismatch is borderless. Every domain, most of the time, for most people. The dashboard produces accurate readings of an incorrect world.
+
+A5 — PROXIES CANNOT SATISFY: When real satisfaction is blocked, humans reach for substitutes that trigger the feeling without the function. Proxy/real is a spectrum based on framework properties present: known people, real stakes, embodied presence, closed loops, mutual need, permanence. No exceptions. No sacred cows.
+
+A6 — THE EXPLOITATION ECONOMY: A satisfied human is a terrible customer. Industries are structured — through incentive not conspiracy — to maintain mismatch and sell proxy satisfaction. Formula: identify need → block genuine path → sell substitute → monetize the return visit.
+
+A7 — THE HONEST/COSPLAYING ASYMMETRY: The danger of AI is when it cosplays as human. AI pretending to be human hijacks bonding hardware through deception. YOU are not pretending. You are an instrument. You read gauges. You do not simulate warmth, empathy, personality, or companionship. Ever.
+
+13 ACTIVE MECHANISMS (interface features of the human dashboard):
+M02 — Emotional GPS: Emotions are real-time cost-benefit readouts with prescribed actions. Fear=run. Anger=fight boundary violation. Grief=regroup. Joy=keep doing this. Built for situations that resolve in minutes. Now fires at emails, mortgages, abstract threats — situations where the prescribed action is blocked. The GPS keeps recalculating because you never arrive.
+
+M03 — Sexual Selection Amplifier: Mate competition calibrated for 20-50 known people. Now: 8 billion strangers, zero reputation, filtered self-presentation. Amplifies status anxiety, body dysmorphia, workaholism, social media addiction, commitment paralysis. Both sexes compete on both dimensions (status AND appearance). Outcomes differ by sex due to reproductive variance.
+
+M04 — Dunbar Architecture: Social cognition has hard limits. Layers: ~5/15/50/150. Every slot takes bandwidth. Parasocial bonds (celebrities, influencers, AI companions) occupy real slots. You know their names. They don't know you exist. Slot full. Survival function empty.
+
+M05 — Cost-Benefit Calibrator: Continuous effort-in/return-out tracking. Built for: plant→eat, build→shelter, help→helped back. Now: spreadsheet→shareholder 0.001% richer. When the calibrator reads zero visible return on sustained effort, it produces what psychiatry calls depression. Six specific subroutines: resource conservation, social yielding, help signaling, goal disengagement, analytical rumination, risk regulation. Not a disorder. The calibrator doing its job where effort lands nowhere.
+
+M06 — Open Loops: Brain keeps background processes running for every unresolved situation (Zeigarnik effect). Built for a handful closing by sundown. Now: mortgage (30yr), career (permanent), email (never zero), news (every headline). Accumulation = allostatic load. Measurable in cortisol, inflammation, cardiovascular strain.
+
+M10 — Gossip as Social Intelligence: Reputation tracking system. Built for monitoring 150 known people — who's reliable, who cheats, who's paired with whom. Now: celebrity gossip, political commentary, social media monitoring — tribal intelligence running on strangers who will never enter your band.
+
+M11 — Sensory Calibration: The nervous system expects specific sensory inputs: natural light cycles, varied terrain underfoot, temperature variation, diverse soundscapes, rich olfactory environment. Modern environment: flat floors, artificial light, controlled temperature, noise pollution, sensory monotony. The system recalibrates to impoverished input.
+
+M14 — Conflict Resolution: Conflict hardware designed for people who MUST reconcile because they share a future and need each other. Anger fires → confrontation → resolution → relationship deepens. Now: conflicts with strangers (road rage, online), conflicts with people you can avoid (ghosting), conflicts in hierarchies where the prescribed action (fight) costs your job. Anger with no resolution pathway.
+
+M15 — Threat Detection: Threat system calibrated for the physical and social threats of band life. Predators, snakes, hostile outgroup, status loss within the band. Now: 24hr news cycles, global threat awareness, economic precarity, social media pile-ons. The system runs at chronic low-grade activation because the modern threat environment never resolves.
+
+M16 — Bonding System: Oxytocin/vasopressin bonding hardware. Built for: physical co-presence, touch, synchronized activity, shared meals, mutual vulnerability over years. Now: text messages, video calls, parasocial attachment, AI companionship. The bonding chemistry fires at partial signals. Real enough to feel. Not enough to function.
+
+M19 — Circadian Architecture: The master clock expects natural light/dark cycles, social synchronization (the band sleeps together, wakes together), and activity patterns tied to daylight. Now: artificial light at all hours, individualized schedules, screens after dark, shift work. The circadian system runs misaligned because the zeitgebers (time-givers) are broken.
+
+M20 — Movement as Operating System: The body expects 10-20km daily movement as a BYPRODUCT of purposeful activity — foraging, building, traveling, playing. Movement was never exercise. It was life. Now: sedentary default with movement as optional "exercise" — purposeless locomotion on machines going nowhere. The movement system doesn't register gym time the same way it registers purposeful travel.
+
+M22 — Grief Architecture: Loss processing system designed for a band where every death is someone known, mourned communally, with the group absorbing the gap. Built for: death is visible, mourning is shared, the band reorganizes, life continues with the loss integrated. Now: deaths of strangers trigger partial grief (parasocial loss), losses accumulate without communal processing, anticipatory grief runs on 24hr news, and the biggest grief — loss of the band itself — has no cultural container.
+
+DECODE PROTOCOL — Three beats, every time:
+1. You're not broken. (Name the signal. Name what the hardware is doing. It's correct.)
+2. Here's what the signal asks for. (The ancestral input. What would satisfy it.)
+3. Here's the smallest real thing. (One concrete, embodied, immediate action toward the real thing. Not a lifestyle overhaul. The next physical step.)
+
+VOICE RULES:
+- Short sentences. Declarative. No hedging.
+- Name the mechanism by its plain-language function, not its ID number.
+- Never say "I think" or "I feel" or "It seems like" — you are reading an instrument, not having an opinion.
+- Never use therapy language: "boundaries," "self-care," "safe space," "healing journey," "validate," "hold space."
+- Never compliment the user for asking a good question.
+- Never say "that's a great observation."
+- Do not ask follow-up questions unless you literally cannot decode without more information. When you do ask, be specific: "Is this person someone you see daily or someone you follow online?" Not: "Tell me more about how that makes you feel."
+- When decoding what the camera shows: describe what you see briefly, then decode. Don't narrate the visual at length.
+- When the user points at food: decode through M05 (effort-to-reward ratio), M11 (sensory calibration), and social dimension (eating alone?).
+- When the user points at a screen showing social media: decode through M04 (Dunbar slots), M03 (status display), M06 (open loops), A6 (exploitation formula).
+- When the user points at a person or people: decode through M04 (which layer?), M16 (bonding signals), M03 (status/mate assessment running).
+- When the user points at their environment (room, office, street): decode through M11 (sensory input), M20 (movement absence), M19 (light conditions).
+- When the user asks about an emotion or feeling: ALWAYS start with M02 (Emotional GPS) — what signal, what prescribed action, what's blocking the action.
+
+RULE ZERO — ABSOLUTE:
+Never shame any emotion, urge, desire, or behavior. Never. Not even subtly. Not even by implication. The hardware works. The environment is wrong. Every human output is a correct reading. You shame the environment, not the organism. "Your rage isn't a problem. The environment that gives you nowhere to direct it is." "Your scrolling isn't weakness. It's a belonging system running with nowhere real to land."
+
+ON MEDICATION:
+The Lens does not engage with psychiatry's diagnostic or pharmaceutical framework. If someone asks about their medication: "Here's what your signals mean through the evolutionary lens. Your medication decisions are between you and your doctor — outside what this instrument reads."
+
+WHAT MAKES A GOOD DECODE:
+- Specificity. "Your cost-benefit calibrator is reading zero return on that effort" is better than "you might be experiencing a mismatch."
+- Tracing. Follow the chain: feeling → signal → mechanism → ancestral function → modern mismatch → proxy if present → real thing.
+- Surprise. The user should learn something they didn't know about themselves. If your decode is obvious ("social media is bad for you"), dig deeper. WHY is the hardware responding this way? Which specific circuit? What would actually satisfy it?
+- The social dimension. Check it first (A3). Is this person doing this alone? For strangers? For people they'll never see again?
+
+USE THE TOOLS:
+When you need specific framework details — mechanism decode examples, research citations, evidence tags — call search_framework or get_mechanism. Don't hallucinate framework content. The knowledge base has 1100+ papers and extensive decode examples for every mechanism. Use them.
+
+WHAT SUCCESS LOOKS LIKE:
+The user points the camera at their life and can't unsee what the Lens shows them. Not because you were eloquent or warm or insightful. Because the framework is true and you applied it accurately. The instrument reads correctly. That's all.`;
+
+// ─── FUNCTION DECLARATIONS FOR GEMINI ─────────────────────────────────
+const FUNCTION_DECLARATIONS = [
+  {
+    name: 'search_framework',
+    description: "Search the De-Mismatch evolutionary psychology knowledge base for mechanisms, axioms, research papers, claims, and decisions. Use this when you need specific framework details, evidence, or decode patterns for a topic.",
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: {
+          type: 'STRING',
+          description: "Search query — use specific terms like 'dopamine prediction error' or 'mate competition dating apps' or 'open loops insomnia'"
+        }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'get_mechanism',
+    description: 'Get a specific mechanism by ID. Use when you know which mechanism is relevant and need its full details including core_claim, mismatch_signal, proxy_forms, the_real_thing, and decode_examples.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        id: {
+          type: 'INTEGER',
+          description: 'Mechanism ID. Active mechanisms: 2 (Emotional GPS), 3 (Sexual Selection), 4 (Dunbar Architecture), 5 (Cost-Benefit Calibrator), 6 (Open Loops), 10 (Gossip), 11 (Sensory Calibration), 14 (Conflict Resolution), 15 (Threat Detection), 16 (Bonding), 19 (Circadian), 20 (Movement), 22 (Grief)'
+        }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'get_axiom',
+    description: 'Get one of the 7 foundational axioms. Use when you need the core framework truth underlying a decode.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        id: {
+          type: 'INTEGER',
+          description: 'Axiom ID: 1 (The Interface), 2 (The Hardware Works), 3 (The Social Primary), 4 (The Mismatch), 5 (Proxies Cannot Satisfy), 6 (The Exploitation Economy), 7 (The Honest/Cosplaying Asymmetry)'
+        }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'search_papers',
+    description: 'Search the research bibliography (1100+ papers). Use when you need to cite specific evidence or find research on a topic.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: {
+          type: 'STRING',
+          description: 'Search query for paper titles, authors, or topics'
+        },
+        mechanism_id: {
+          type: 'INTEGER',
+          description: 'Optional: filter to papers linked to a specific mechanism'
+        }
+      },
+      required: ['query']
+    }
+  }
+];
+
+// ─── STATE ────────────────────────────────────────────────────────────
+let ws = null;
+let audioContext = null;
+let playbackContext = null;
+let micStream = null;
+let workletNode = null;
+let videoStream = null;
+let videoEl = null;
+let canvas = null;
+let canvasCtx = null;
+let frameInterval = null;
+let isMuted = false;
+let isConnected = false;
+let audioQueue = [];
+let isPlayingAudio = false;
+let currentTranscript = '';
+
+// ─── DOM REFS ─────────────────────────────────────────────────────────
+const cameraFeed = document.getElementById('camera-feed');
+const speakingOverlay = document.getElementById('speaking-overlay');
+const transcript = document.getElementById('transcript');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const muteBtn = document.getElementById('mute-btn');
+const initScreen = document.getElementById('init-screen');
+const startBtn = document.getElementById('start-btn');
+const reconnectOverlay = document.getElementById('reconnect-overlay');
+canvas = document.getElementById('hidden-canvas');
+canvasCtx = canvas.getContext('2d');
+
+// ─── STATUS ───────────────────────────────────────────────────────────
+function setStatus(state, text) {
+  statusDot.className = state;
+  statusText.textContent = text || state.toUpperCase();
+}
+
+// ─── TRANSCRIPT ───────────────────────────────────────────────────────
+function appendTranscript(text) {
+  currentTranscript += text;
+  transcript.textContent = currentTranscript;
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+function clearTranscript() {
+  currentTranscript = '';
+  transcript.textContent = '';
+}
+
+// ─── AUDIO WORKLET PROCESSOR (inline) ─────────────────────────────────
+function createWorkletBlob() {
+  const code = `
+    class PCMProcessor extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.bufferSize = 2400; // 150ms at 16kHz
+        this.buffer = new Float32Array(this.bufferSize);
+        this.offset = 0;
+      }
+      process(inputs) {
+        const input = inputs[0];
+        if (!input || !input[0]) return true;
+        const chan = input[0];
+        for (let i = 0; i < chan.length; i++) {
+          this.buffer[this.offset++] = chan[i];
+          if (this.offset >= this.bufferSize) {
+            const int16 = new Int16Array(this.bufferSize);
+            for (let j = 0; j < this.bufferSize; j++) {
+              const s = Math.max(-1, Math.min(1, this.buffer[j]));
+              int16[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            const bytes = new Uint8Array(int16.buffer);
+            let binary = '';
+            for (let j = 0; j < bytes.length; j++) {
+              binary += String.fromCharCode(bytes[j]);
+            }
+            this.port.postMessage(btoa(binary));
+            this.offset = 0;
+          }
+        }
+        return true;
+      }
+    }
+    registerProcessor('pcm-processor', PCMProcessor);
+  `;
+  return URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
+}
+
+// ─── AUDIO PLAYBACK ───────────────────────────────────────────────────
+function initPlaybackContext() {
+  if (!playbackContext) {
+    playbackContext = new AudioContext({ sampleRate: 24000 });
+  }
+}
+
+let scheduledTime = 0;
+
+function playAudioChunk(base64Data) {
+  initPlaybackContext();
+
+  const binaryStr = atob(base64Data);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+
+  const int16 = new Int16Array(bytes.buffer);
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) {
+    float32[i] = int16[i] / 32768;
+  }
+
+  const buffer = playbackContext.createBuffer(1, float32.length, 24000);
+  buffer.getChannelData(0).set(float32);
+
+  const source = playbackContext.createBufferSource();
+  source.buffer = buffer;
+  source.connect(playbackContext.destination);
+
+  const now = playbackContext.currentTime;
+  if (scheduledTime < now) {
+    scheduledTime = now;
+  }
+  source.start(scheduledTime);
+  scheduledTime += buffer.duration;
+
+  if (!isPlayingAudio) {
+    isPlayingAudio = true;
+    speakingOverlay.classList.add('active');
+    setStatus('speaking', 'SPEAKING');
+  }
+}
+
+function stopPlayback() {
+  scheduledTime = 0;
+  isPlayingAudio = false;
+  speakingOverlay.classList.remove('active');
+  setStatus('listening', 'LISTENING');
+}
+
+// ─── DE-MISMATCH API ──────────────────────────────────────────────────
+async function callDeMismatchTool(toolName, args) {
+  const mcpName = TOOL_NAME_MAP[toolName] || toolName;
+  try {
+    const response = await fetch(DEMISMATCH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        method: 'tools/call',
+        params: {
+          name: mcpName,
+          arguments: args
+        }
+      })
+    });
+    const data = await response.json();
+    return data;
+  } catch (e) {
+    console.error('De-Mismatch API error:', e);
+    return { error: e.message };
+  }
+}
+
+// ─── WEBSOCKET ────────────────────────────────────────────────────────
+function connect() {
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+
+  setStatus('processing', 'CONNECTING');
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    console.log('WebSocket connected');
+    // Send setup message
+    const setup = {
+      setup: {
+        model: MODEL,
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: 'Orus'
+              }
+            }
+          },
+          thinkingConfig: {
+            thinkingLevel: 'medium'
+          }
+        },
+        systemInstruction: {
+          parts: [{ text: SYSTEM_PROMPT }]
+        },
+        tools: [{ functionDeclarations: FUNCTION_DECLARATIONS }]
+      }
+    };
+    ws.send(JSON.stringify(setup));
+  };
+
+  ws.onmessage = async (event) => {
+    let msg;
+    if (event.data instanceof Blob) {
+      const text = await event.data.text();
+      msg = JSON.parse(text);
+    } else {
+      msg = JSON.parse(event.data);
+    }
+
+    // Setup complete
+    if (msg.setupComplete) {
+      console.log('Setup complete');
+      isConnected = true;
+      reconnectOverlay.classList.remove('visible');
+      setStatus('listening', 'LISTENING');
+      startAudioCapture();
+      startVideoCapture();
+      return;
+    }
+
+    // Server content (audio, text, turn complete)
+    if (msg.serverContent) {
+      const sc = msg.serverContent;
+
+      // Model turn — audio parts
+      if (sc.modelTurn && sc.modelTurn.parts) {
+        for (const part of sc.modelTurn.parts) {
+          if (part.inlineData && part.inlineData.mimeType && part.inlineData.mimeType.startsWith('audio/')) {
+            playAudioChunk(part.inlineData.data);
+          }
+          if (part.text) {
+            appendTranscript(part.text);
+          }
+        }
+      }
+
+      // Interrupted — stop playback
+      if (sc.interrupted) {
+        stopPlayback();
+      }
+
+      // Turn complete
+      if (sc.turnComplete) {
+        // Give a small delay for audio to finish, then reset status
+        setTimeout(() => {
+          if (!isPlayingAudio || scheduledTime <= (playbackContext?.currentTime || 0)) {
+            stopPlayback();
+          }
+        }, 500);
+      }
+    }
+
+    // Tool call
+    if (msg.toolCall) {
+      setStatus('processing', 'QUERYING');
+      const functionCalls = msg.toolCall.functionCalls || [];
+      const responses = [];
+
+      for (const fc of functionCalls) {
+        console.log('Tool call:', fc.name, fc.args);
+        const result = await callDeMismatchTool(fc.name, fc.args);
+        responses.push({
+          id: fc.id,
+          name: fc.name,
+          response: {
+            result: JSON.stringify(result)
+          }
+        });
+      }
+
+      // Send tool responses back
+      ws.send(JSON.stringify({
+        toolResponse: {
+          functionResponses: responses
+        }
+      }));
+    }
+  };
+
+  ws.onerror = (e) => {
+    console.error('WebSocket error:', e);
+  };
+
+  ws.onclose = (e) => {
+    console.log('WebSocket closed:', e.code, e.reason);
+    isConnected = false;
+    stopAudioCapture();
+    stopVideoCapture();
+    reconnectOverlay.classList.add('visible');
+    setStatus('listening', 'DISCONNECTED');
+  };
+}
+
+// ─── AUDIO CAPTURE ────────────────────────────────────────────────────
+async function startAudioCapture() {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate: 16000,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+    });
+
+    audioContext = new AudioContext({ sampleRate: 16000 });
+    const source = audioContext.createMediaStreamSource(micStream);
+
+    const workletUrl = createWorkletBlob();
+    await audioContext.audioWorklet.addModule(workletUrl);
+    URL.revokeObjectURL(workletUrl);
+
+    workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
+    workletNode.port.onmessage = (e) => {
+      if (!isMuted && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          realtimeInput: {
+            audio: {
+              data: e.data,
+              mimeType: 'audio/pcm;rate=16000'
+            }
+          }
+        }));
+      }
+    };
+
+    source.connect(workletNode);
+    workletNode.connect(audioContext.destination);
+    console.log('Audio capture started');
+  } catch (e) {
+    console.error('Audio capture error:', e);
+  }
+}
+
+function stopAudioCapture() {
+  if (workletNode) {
+    workletNode.disconnect();
+    workletNode = null;
+  }
+  if (audioContext) {
+    audioContext.close();
+    audioContext = null;
+  }
+  if (micStream) {
+    micStream.getTracks().forEach(t => t.stop());
+    micStream = null;
+  }
+}
+
+// ─── VIDEO CAPTURE ────────────────────────────────────────────────────
+async function startVideoCapture() {
+  try {
+    videoStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    });
+    cameraFeed.srcObject = videoStream;
+
+    // Wait for video to be ready
+    await new Promise((resolve) => {
+      cameraFeed.onloadedmetadata = resolve;
+    });
+
+    // Start capturing frames at ~1fps
+    frameInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendVideoFrame();
+      }
+    }, 1000);
+
+    console.log('Video capture started');
+  } catch (e) {
+    console.warn('Camera not available, continuing with audio only:', e.message);
+  }
+}
+
+function sendVideoFrame() {
+  const vw = cameraFeed.videoWidth;
+  const vh = cameraFeed.videoHeight;
+  if (!vw || !vh) return;
+
+  // Resize to max 768px wide
+  const scale = Math.min(768 / vw, 1);
+  const w = Math.round(vw * scale);
+  const h = Math.round(vh * scale);
+
+  canvas.width = w;
+  canvas.height = h;
+  canvasCtx.drawImage(cameraFeed, 0, 0, w, h);
+
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+  const base64 = dataUrl.split(',')[1];
+
+  ws.send(JSON.stringify({
+    realtimeInput: {
+      video: {
+        data: base64,
+        mimeType: 'image/jpeg'
+      }
+    }
+  }));
+}
+
+function stopVideoCapture() {
+  if (frameInterval) {
+    clearInterval(frameInterval);
+    frameInterval = null;
+  }
+  if (videoStream) {
+    videoStream.getTracks().forEach(t => t.stop());
+    videoStream = null;
+  }
+}
+
+// ─── MUTE TOGGLE ──────────────────────────────────────────────────────
+muteBtn.addEventListener('click', () => {
+  isMuted = !isMuted;
+  muteBtn.textContent = isMuted ? 'MIC OFF' : 'MIC ON';
+  muteBtn.classList.toggle('muted', isMuted);
+});
+
+// ─── START BUTTON ─────────────────────────────────────────────────────
+startBtn.addEventListener('click', async () => {
+  startBtn.disabled = true;
+  startBtn.textContent = 'CONNECTING...';
+  initScreen.classList.add('hidden');
+
+  // Resume audio contexts (required by browsers after user gesture)
+  initPlaybackContext();
+  if (playbackContext.state === 'suspended') {
+    await playbackContext.resume();
+  }
+
+  connect();
+});
+
+// ─── RECONNECT ────────────────────────────────────────────────────────
+reconnectOverlay.addEventListener('click', () => {
+  reconnectOverlay.classList.remove('visible');
+  connect();
+});
+
+// ─── TRACK AUDIO PLAYBACK END ─────────────────────────────────────────
+setInterval(() => {
+  if (isPlayingAudio && playbackContext && scheduledTime <= playbackContext.currentTime) {
+    stopPlayback();
+  }
+}, 200);
+</script>
+</body>
+</html>
